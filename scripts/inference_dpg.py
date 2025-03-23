@@ -13,6 +13,11 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 import argparse
 import json
@@ -262,12 +267,17 @@ class SanaInference(SanaConfig):
     ablation_key: str = field(default=None, metadata={"choices": ["step", "cfg_scale", "pag_scale"]})
     if_save_dirname: bool = False
 
+    stich_config: str = ""
+
 
 if __name__ == "__main__":
 
     args = get_args()
     config = args = pyrallis.parse(config_class=SanaInference, config_path=args.config)
     # config = read_config(args.config)
+    if config.stich_config is None or config.stich_config in ['None', 'false', 'clean']:
+        config.stich_config = ''
+    print(f'Config:', config)
 
     args.image_size = config.model.image_size
     if args.custom_image_size:
@@ -342,6 +352,11 @@ if __name__ == "__main__":
         if args.model_path.startswith("/")
         else os.path.join(*args.model_path.split("/")[:-2])
     )
+    ##########
+    if config.stich_config.strip() != '':
+        print(b'BP-DPG2', config.stich_config, config.stich_config.split("/")[-1].rstrip(".json").rstrip(".txt"))
+        work_dir += f'__{config.stich_config.split("/")[-1].rstrip(".json").rstrip(".txt")}'
+    ##########
 
     # dataset
     dict_prompt = args.json_file is not None
@@ -363,13 +378,17 @@ if __name__ == "__main__":
     os.makedirs(img_save_dir, exist_ok=True)
     logger.info(f"Sampler {args.sampling_algo}")
 
-    def create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type):
+    def create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, stich_config):
+        tmp = ''
+        if stich_config is not None and stich_config.strip() != '':
+            tmp = f"_stich{stich_config.split('/')[-1].rstrip('.json').rstrip('.txt')}"
+            print(f'BP-DPG3:', tmp)
         save_root = os.path.join(
             img_save_dir,
             # f"{datetime.now().date() if args.exist_time_prefix == '' else args.exist_time_prefix}_"
             f"{dataset}_epoch{epoch_name}_step{step_name}_scale{args.cfg_scale}"
             f"_step{sample_steps}_size{args.image_size}_bs{batch_size}_samp{args.sampling_algo}"
-            f"_seed{args.seed}_{str(weight_dtype).split('.')[-1]}",
+            f"_seed{args.seed}_{str(weight_dtype).split('.')[-1]}{tmp}",
         )
 
         if args.pag_scale != 1.0:
@@ -391,6 +410,16 @@ if __name__ == "__main__":
             guidance_type = "classifier-free"
         return guidance_type
 
+    # ################
+    print(model)
+    print(f'Given stich_config:', config.stich_config)
+    if config.stich_config is not None and config.stich_config.strip() != '' and config.stich_config not in ['false', 'None', 'clean']:
+        from lens_utils.stich_model import stich_model_from_config
+        stich_model_from_config(model, config.stich_config)
+    else:
+        print(f'Clean run. no stiching')
+    # ################
+
     dataset = "MJHQ-30K" if args.json_file and "MJHQ-30K" in args.json_file else args.dataset
     if args.ablation_selections and args.ablation_key:
         for ablation_factor in args.ablation_selections:
@@ -399,7 +428,7 @@ if __name__ == "__main__":
             sample_steps = args.step if args.step != -1 else sample_steps_dict[args.sampling_algo]
             guidance_type = guidance_type_select(guidance_type, args.pag_scale, config.model.attn_type)
 
-            save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type)
+            save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, config.stich_config)
             os.makedirs(save_root, exist_ok=True)
             if args.if_save_dirname and args.gpu_id == 0:
                 # save at work_dir/metrics/tmp_xxx.txt for metrics testing
@@ -413,7 +442,7 @@ if __name__ == "__main__":
         guidance_type = guidance_type_select(guidance_type, args.pag_scale, config.model.attn_type)
         logger.info(f"Inference with {weight_dtype}, guidance_type: {guidance_type}, flow_shift: {flow_shift}")
 
-        save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type)
+        save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, config.stich_config)
         os.makedirs(save_root, exist_ok=True)
         if args.if_save_dirname and args.gpu_id == 0:
             os.makedirs(f"{work_dir}/metrics", exist_ok=True)

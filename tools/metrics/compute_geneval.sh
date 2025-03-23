@@ -1,10 +1,10 @@
 #!/bin/bash
 
-export PATH="$HOME/anaconda3/envs/geneval/bin:$PATH"
+# export PATH="$HOME/anaconda3/envs/geneval/bin:$PATH"
 # ===================== hyper =================
 geneval=true
 
-np=8    # number of GPU to use
+np=1    # number of GPU to use
 py=tools/metrics/geneval/evaluation/evaluate_images.py
 default_sample_nums=553
 report_to=wandb
@@ -68,7 +68,8 @@ if [ "$geneval" = true ]; then
     cmd="${cmd//\{exp_name\}/$exp_name}"
     cmd="${cmd//\{job_name\}/$job_name}"
     cmd="${cmd//\{gpu_id\}/0}"
-    eval CUDA_VISIBLE_DEVICES=0 $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1
+    # eval CUDA_VISIBLE_DEVICES=0 $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1
+    eval $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1
     cat "${img_path}/${exp_name}_geneval_result.txt"
   else
 
@@ -78,7 +79,7 @@ if [ "$geneval" = true ]; then
     fi
 
     gpu_id=0
-    max_parallel_jobs=8
+    max_parallel_jobs=1
     job_count=0
     echo "" >> "$exp_names"   # add a new line to the file avoid skipping last line dir
 
@@ -90,7 +91,8 @@ if [ "$geneval" = true ]; then
         cmd="${cmd//\{exp_name\}/$exp_name}"
         cmd="${cmd//\{job_name\}/$job_name}"
         echo "Running on GPU $gpu_id: $cmd"
-        eval CUDA_VISIBLE_DEVICES=$gpu_id $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1 &
+        # eval CUDA_VISIBLE_DEVICES=$gpu_id $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1 &
+        eval $cmd >> "${img_path}/${exp_name}_geneval_result.txt" 2>&1 &
 
         gpu_id=$(( (gpu_id + 1) % 8 ))
         job_count=$((job_count + 1))
@@ -141,5 +143,5 @@ if [ "$log_geneval" = true ] && [ "$geneval" = true ]; then
   fi
 fi
 
-export PATH="$HOME/anaconda3/envs/sana/bin:$PATH"
+# export PATH="$HOME/anaconda3/envs/sana/bin:$PATH"
 echo GenEval finally done

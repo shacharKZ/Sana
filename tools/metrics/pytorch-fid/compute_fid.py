@@ -1,3 +1,10 @@
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
 import json
 import os
 import pathlib
@@ -303,6 +310,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    print(f'args:', args)
     sample_nums = args.sample_nums
     if args.stat:
         if args.device is None:

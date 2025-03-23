@@ -26,6 +26,9 @@ from .nets.sana_blocks import (
     SelfAttnProcessorLiteLA,
 )
 
+def print_debug_info(msg, ignore=False):
+    if not ignore:
+        print(msg)
 
 class NoiseScheduleVP:
     def __init__(
@@ -546,7 +549,7 @@ def model_wrapper(
     return model_fn
 
 
-class DPM_Solver:
+class DPM_Solver_EarlyExit:
     def __init__(
         self,
         model_fn,
@@ -1218,7 +1221,8 @@ class DPM_Solver:
         else:
             raise ValueError(f"Solver order must be 1 or 2 or 3, got {order}")
 
-    def multistep_dpm_solver_update(self, x, model_prev_list, t_prev_list, t, order, solver_type="dpmsolver"):
+    def multistep_dpm_solver_update(self, x, model_prev_list, t_prev_list, t, order, solver_type="dpmsolver",
+                                    exit_step=1000, denoise_last_step=True):
         """
         Multistep DPM-Solver with the order `order` from time `t_prev_list[-1]` to time `t`.
 
@@ -1233,6 +1237,13 @@ class DPM_Solver:
         Returns:
             x_t: A pytorch tensor. The approximated solution at time `t`.
         """
+
+        if t == exit_step and denoise_last_step == False:
+            print_debug_info(f"Early exit at step {t}")
+            return x
+        elif t > exit_step and denoise_last_step == False:
+            raise ValueError(f"Early exit at step {t}, but t>exit_step ({exit_step}) and denoise_last_step is False")
+
         if order == 1:
             return self.dpm_solver_first_update(x, t_prev_list[-1], t, model_s=model_prev_list[-1])
         elif order == 2:
@@ -1367,6 +1378,10 @@ class DPM_Solver:
             return_intermediate=return_intermediate,
         )
 
+
+
+            
+
     def sample(
         self,
         x,
@@ -1383,6 +1398,9 @@ class DPM_Solver:
         rtol=0.05,
         return_intermediate=False,
         flow_shift=1.0,
+        exit_step=1000,
+        denoise_last_step=True,
+        alpha_normalize_without_denoise=0,
     ):
         """
         Compute the sample at time `t_end` by DPM-Solver, given the initial `x` at time `t_start`.
@@ -1511,9 +1529,10 @@ class DPM_Solver:
             ], "Cannot use adaptive solver when correcting_xt_fn is not None"
         device = x.device
         intermediates = []
-        print(f'BP_DPM_SOLVER: method={method}, denoise_to_zero={denoise_to_zero}, solver_type={solver_type}, atol={atol}, rtol={rtol}, return_intermediate={return_intermediate}')
+        print_debug_info(f'BP_DPM_SOLVER_EX: method={method}, denoise_to_zero={denoise_to_zero}, solver_type={solver_type}, atol={atol}, rtol={rtol}, return_intermediate={return_intermediate}, flow_shift={flow_shift}, exit_step={exit_step}, denoise_last_step={denoise_last_step}, alpha_normalize_without_denoise={alpha_normalize_without_denoise}')
         with torch.no_grad():
             if method == "adaptive":
+                raise ValueError(f"Currently DPM-Solver with early stopping is not supported for method {method}")
                 x = self.dpm_solver_adaptive(
                     x, order=order, t_T=t_T, t_0=t_0, atol=atol, rtol=rtol, solver_type=solver_type
                 )
@@ -1522,6 +1541,21 @@ class DPM_Solver:
                 timesteps = self.get_time_steps(
                     skip_type=skip_type, t_T=t_T, t_0=t_0, N=steps, device=device, shift=flow_shift
                 )
+
+                print_debug_info(f'BP_DPM_SOLVER_EX_40: timesteps={timesteps}')
+
+                if exit_step < steps:
+                    print_debug_info(f'BP_DPM_SOLVER_EX_41: setting steps to exit_step={exit_step} (original steps={steps})')
+                    # timesteps[exit_step] = timesteps[-1]
+                    # timesteps = timesteps[:exit_step+1]
+                    timesteps = timesteps[:exit_step+1]
+                    steps = exit_step
+                    print_debug_info(f'BP_DPM_SOLVER_EX_421: timesteps={timesteps}')
+                else:
+                    print_debug_info(f'BP_DPM_SOLVER_EX_42: Warning exit_step={exit_step} > steps={steps} means no early exit')
+
+
+
                 assert timesteps.shape[0] - 1 == steps
                 # Init the initial values.
                 step = 0
@@ -1534,12 +1568,13 @@ class DPM_Solver:
                     intermediates.append(x)
                 self.update_progress(step + 1, len(timesteps))
                 # Init the first `order` values by lower order multistep DPM-Solver.
-                print(f'BP_DPM_SOLVER0: steps={steps}, t_T={t_T}, t_0={t_0}, order={order}, method={method}, denoise_to_zero={denoise_to_zero}, solver_type={solver_type}, atol={atol}, rtol={rtol}, return_intermediate={return_intermediate}, timesteps={timesteps}')
+                print_debug_info(f'BP_DPM_SOLVER_EX_0: steps={steps}, t_T={t_T}, t_0={t_0}, order={order}, method={method}, denoise_to_zero={denoise_to_zero}, solver_type={solver_type}, atol={atol}, rtol={rtol}, return_intermediate={return_intermediate}, timesteps={timesteps}')
                 for step in range(1, order):
-                    print(f'BP_DPM_SOLVER_1: step={step}, order={order}, steps={steps}')
+                    print_debug_info(f'BP_DPM_SOLVER_EX_1: step={step}, order={order}, steps={steps}')
                     t = timesteps[step]
                     x = self.multistep_dpm_solver_update(
-                        x, model_prev_list, t_prev_list, t, step, solver_type=solver_type
+                        x, model_prev_list, t_prev_list, t, step, solver_type=solver_type,
+                        exit_step=exit_step, denoise_last_step=denoise_last_step
                     )
                     if self.correcting_xt_fn is not None:
                         x = self.correcting_xt_fn(x, t, step)
@@ -1551,8 +1586,8 @@ class DPM_Solver:
                     self.update_progress(step + 1, len(timesteps))
                 # Compute the remaining values by `order`-th order multistep DPM-Solver.
                 for step in tqdm(range(order, steps + 1), disable=os.getenv("DPM_TQDM", "False") == "True"):
-                    print(f'BP_DPM_SOLVER_2: step={step}, order={order}, steps={steps}')
                     t = timesteps[step]
+                    print_debug_info(f'BP_DPM_SOLVER_EX_2: step={step}, t={t}, order={order}, steps={steps})')
                     # We only use lower order for steps < 10
                     # if lower_order_final and steps < 10:
                     if lower_order_final:  # recommended by Shuchen Xue
@@ -1560,7 +1595,8 @@ class DPM_Solver:
                     else:
                         step_order = order
                     x = self.multistep_dpm_solver_update(
-                        x, model_prev_list, t_prev_list, t, step_order, solver_type=solver_type
+                        x, model_prev_list, t_prev_list, t, step_order, solver_type=solver_type,
+                        exit_step=exit_step, denoise_last_step=denoise_last_step
                     )
                     if self.correcting_xt_fn is not None:
                         x = self.correcting_xt_fn(x, t, step)
@@ -1576,6 +1612,7 @@ class DPM_Solver:
                     # update progress bar
                     self.update_progress(step + 1, len(timesteps))
             elif method in ["singlestep", "singlestep_fixed"]:
+                raise ValueError(f"Currently DPM-Solver with early stopping is not supported for method {method}")
                 if method == "singlestep":
                     timesteps_outer, orders = self.get_orders_and_timesteps_for_singlestep_solver(
                         steps=steps, order=order, skip_type=skip_type, t_T=t_T, t_0=t_0, device=device
@@ -1603,13 +1640,24 @@ class DPM_Solver:
                     self.update_progress(step + 1, len(timesteps_outer))
             else:
                 raise ValueError(f"Got wrong method {method}")
+            
             if denoise_to_zero:
+                raise ValueError(f"Currently DPM-Solver with denoise_to_zero is not supported")
                 t = torch.ones((1,)).to(device) * t_0
                 x = self.denoise_to_zero_fn(x, t)
                 if self.correcting_xt_fn is not None:
                     x = self.correcting_xt_fn(x, t, step + 1)
                 if return_intermediate:
                     intermediates.append(x)
+        
+        if denoise_last_step == False and alpha_normalize_without_denoise != 0:
+            # for b_index in range(x.shape[0]):
+            #     _norm = x[b_index].norm()
+            #     x[b_index] = alpha_normalize_without_denoise * x[b_index] / _norm
+            _norm = x.view(x.shape[0], -1).norm(dim=1).view(-1, 1, 1, 1)
+            x = alpha_normalize_without_denoise * x / _norm
+            print_debug_info(f"BP_DPM_SOLVER_EX_99: alpha_normalize_without_denoise={alpha_normalize_without_denoise}, x.shape={x.shape}, _norm.shape={_norm.shape}")
+
         if return_intermediate:
             return x, intermediates
         else:

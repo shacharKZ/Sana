@@ -17,10 +17,10 @@
 import torch
 
 from .model import gaussian_diffusion as gd
-from .model.dpm_solver import DPM_Solver, NoiseScheduleFlow, NoiseScheduleVP, model_wrapper
+from .model.dpm_solver_with_early_exit import DPM_Solver_EarlyExit, NoiseScheduleFlow, NoiseScheduleVP, model_wrapper
 
 
-def DPMS(
+def DPMS_EarlyExit(
     model,
     condition,
     uncondition,
@@ -67,4 +67,4 @@ def DPMS(
         interval_guidance=interval_guidance,
     )
     ## 3. Define dpm-solver and sample by multistep DPM-Solver.
-    return DPM_Solver(model_fn, noise_schedule, algorithm_type="dpmsolver++")
+    return DPM_Solver_EarlyExit(model_fn, noise_schedule, algorithm_type="dpmsolver++")

@@ -7,3 +7,4 @@ from .dpm_solver import DPMS
 from .flow_euler_sampler import FlowEuler
 from .iddpm import Scheduler
 from .sa_sampler import SASolverSampler
+from .dpm_solver_with_early_exit import DPMS_EarlyExit

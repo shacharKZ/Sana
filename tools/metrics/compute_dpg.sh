@@ -1,10 +1,10 @@
 #!/bin/bash
 
-export PATH="$HOME/anaconda3/envs/dpg/bin:$PATH"
+# export PATH="$HOME/anaconda3/envs/dpg/bin:$PATH"
 # ===================== hyper =================
 dpg=true
 
-np=8    # number of GPU to use
+np=1    # number of GPU to use
 py=tools/metrics/dpg_bench/compute_dpg_bench.py
 default_img_size=512    # 256, 512, 1024
 default_sample_nums=1065
@@ -59,7 +59,8 @@ if [ "$dpg" = true ]; then
   # =============== compute DPG-Bench from json ==================
   echo "==================== computing DPG-Bench ===================="
 #  cmd_template="python \
-  cmd_template="accelerate launch --num_machines 1 --num_processes $np --multi_gpu --mixed_precision 'fp16' --main_process_port $PORT \
+  # cmd_template="accelerate launch --num_machines 1 --num_processes $np --multi_gpu --mixed_precision 'fp16' --main_process_port $PORT \
+ cmd_template="python \
               $py --image-root-path {img_path} --exp_name {exp_name} \
               --pic-num $pic_nums_per_prompt --resolution $img_size --vqa-model mplug \
               --report_to $report_to --name {job_name} --tracker_project_name $tracker_project_name"
@@ -122,5 +123,5 @@ if [ "$log_dpg" = true ] && [ "$dpg" = true ]; then
   fi
 fi
 
-export PATH="$HOME/anaconda3/envs/sana/bin:$PATH"
+# export PATH="$HOME/anaconda3/envs/sana/bin:$PATH"
 echo DPG-Bench finally done

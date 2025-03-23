@@ -13,6 +13,12 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
+import sys
+import os
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 import argparse
 import json
 import os
@@ -34,7 +40,7 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore")  # ignore warning
 
-from diffusion import DPMS, FlowEuler, SASolverSampler
+from diffusion import DPMS, FlowEuler, SASolverSampler, DPMS_EarlyExit
 from diffusion.data.datasets.utils import (
     ASPECT_RATIO_512_TEST,
     ASPECT_RATIO_1024_TEST,
@@ -115,6 +121,7 @@ def visualize(config, args, model, items, bs, sample_steps, cfg_scale, pag_scale
         save_file_name = f"{chunk[0]}.jpg" if dict_prompt else f"{prompts[0][:100]}.jpg"
         save_path = os.path.join(save_root, save_file_name)
         if os.path.exists(save_path):
+            print(f'Found {save_path} is already cached. Skipping...')
             # make sure the noise is totally same
             torch.randn(bs, config.vae.vae_latent_dim, latent_size, latent_size, device=device, generator=generator)
             continue
@@ -153,7 +160,7 @@ def visualize(config, args, model, items, bs, sample_steps, cfg_scale, pag_scale
                 generator=generator,
             )
             model_kwargs = dict(data_info={"img_hw": hw, "aspect_ratio": ar}, mask=emb_masks)
-
+            print(f'BP-N3:', args.sampling_algo)
             if args.sampling_algo == "dpm-solver":
                 dpm_solver = DPMS(
                     model.forward_with_dpmsolver,
@@ -211,6 +218,42 @@ def visualize(config, args, model, items, bs, sample_steps, cfg_scale, pag_scale
                     method="multistep",
                     flow_shift=flow_shift,
                 )
+            elif args.sampling_algo.startswith("flow_dpm-solver_early_exit"):
+                # flow_dpm-solver_early_exit_S10 -> early exit at step 10
+                # flow_dpm-solver_early_exit_S10_Dfalse -> Denoise last step is False
+                # flow_dpm-solver_early_exit_S10_Dfalse_A200 -> when denoise is False, alpha_normalize_without_denoise is 200
+                early_exit_step = int(args.sampling_algo.split("_S")[-1].split("_")[0])
+                denoise_last_step = True
+                if '_Dfalse' in args.sampling_algo:
+                    denoise_last_step = False
+                alpha_normalize_without_denoise = 200
+                if '_A' in args.sampling_algo:
+                    alpha_normalize_without_denoise = float(args.sampling_algo.split('_A')[-1])
+
+                dpm_solver = DPMS_EarlyExit(
+                    model,
+                    condition=caption_embs,
+                    uncondition=null_y,
+                    guidance_type=guidance_type,
+                    cfg_scale=cfg_scale,
+                    pag_scale=pag_scale,
+                    pag_applied_layers=pag_applied_layers,
+                    model_type="flow",
+                    model_kwargs=model_kwargs,
+                    schedule="FLOW",
+                    interval_guidance=args.interval_guidance,
+                )
+                samples = dpm_solver.sample(
+                    z,
+                    steps=sample_steps,
+                    order=2,
+                    skip_type="time_uniform_flow",
+                    method="multistep",
+                    flow_shift=flow_shift,
+                    exit_step=early_exit_step,
+                    denoise_last_step=denoise_last_step,
+                    alpha_normalize_without_denoise=alpha_normalize_without_denoise
+                )
             else:
                 raise ValueError(f"{args.sampling_algo} is not defined")
 
@@ -260,11 +303,16 @@ class SanaInference(SanaConfig):
     debug: bool = False
     if_save_dirname: bool = False
 
+    stich_config: str = ""
+
 
 if __name__ == "__main__":
-
     args = get_args()
     config = args = pyrallis.parse(config_class=SanaInference, config_path=args.config)
+    # if config.stich_config is None or :
+    if config.stich_config is None or config.stich_config in ['None', 'false', 'clean']:
+        config.stich_config = ''
+    print(f'Config:', config)
 
     args.image_size = config.model.image_size
     if args.custom_image_size:
@@ -339,6 +387,11 @@ if __name__ == "__main__":
             if args.model_path.startswith("/")
             else os.path.join(*args.model_path.split("/")[:-2])
         )
+        ##########
+        if config.stich_config.strip() != '':
+            print(b'BP-N1', config.stich_config, config.stich_config.split("/")[-1].rstrip(".json").rstrip(".txt"))
+            work_dir += f'__{config.stich_config.split("/")[-1].rstrip(".json").rstrip(".txt")}'
+        ##########
     else:
         work_dir = args.work_dir
     config.work_dir = work_dir
@@ -363,13 +416,17 @@ if __name__ == "__main__":
     os.makedirs(img_save_dir, exist_ok=True)
     logger.info(f"Sampler {args.sampling_algo}")
 
-    def create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type):
+    def create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, stich_config):
+        tmp = ''
+        if stich_config is not None and stich_config.strip() != '':
+            tmp = f"_stich{stich_config.split('/')[-1].rstrip('.json').rstrip('.txt')}"
+            print(f'BP-N2:', tmp)
         save_root = os.path.join(
             img_save_dir,
             # f"{datetime.now().date() if args.exist_time_prefix == '' else args.exist_time_prefix}_"
             f"{dataset}_epoch{epoch_name}_step{step_name}_scale{args.cfg_scale}"
             f"_step{sample_steps}_size{args.image_size}_bs{args.bs}_samp{args.sampling_algo}"
-            f"_seed{args.seed}_{str(weight_dtype).split('.')[-1]}",
+            f"_seed{args.seed}_{str(weight_dtype).split('.')[-1]}{tmp}",
         )
 
         if args.pag_scale != 1.0:
@@ -391,6 +448,16 @@ if __name__ == "__main__":
             guidance_type = "classifier-free"
         return guidance_type
 
+    # ################
+    print(model)
+    print(f'Given stich_config:', config.stich_config)
+    if config.stich_config is not None and config.stich_config.strip() != '' and config.stich_config not in ['false', 'None', 'clean']:
+        from lens_utils.stich_model import stich_model_from_config
+        stich_model_from_config(model, config.stich_config)
+    else:
+        print(f'Clean run. no stiching')
+    # ################
+
     dataset = "MJHQ-30K" if args.json_file and "MJHQ-30K" in args.json_file else args.dataset
     if args.ablation_selections and args.ablation_key:
         for ablation_factor in args.ablation_selections:
@@ -399,7 +466,7 @@ if __name__ == "__main__":
             sample_steps = args.step if args.step != -1 else sample_steps_dict[args.sampling_algo]
             guidance_type = guidance_type_select(guidance_type, args.pag_scale, config.model.attn_type)
 
-            save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type)
+            save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, config.stich_config)
             os.makedirs(save_root, exist_ok=True)
             if args.if_save_dirname and args.gpu_id == 0:
                 os.makedirs(f"{work_dir}/metrics", exist_ok=True)
@@ -423,7 +490,7 @@ if __name__ == "__main__":
         guidance_type = guidance_type_select(guidance_type, args.pag_scale, config.model.attn_type)
         logger.info(f"Inference with {weight_dtype}, guidance_type: {guidance_type}, flow_shift: {flow_shift}")
 
-        save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type)
+        save_root = create_save_root(args, dataset, epoch_name, step_name, sample_steps, guidance_type, config.stich_config)
         os.makedirs(save_root, exist_ok=True)
         if args.if_save_dirname and args.gpu_id == 0:
             os.makedirs(f"{work_dir}/metrics", exist_ok=True)

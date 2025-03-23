@@ -51,6 +51,7 @@ echo "sample_nums: $sample_nums"
 echo "log_clip_score: $log_clip_score"
 echo "tracker_pattern: $tracker_pattern"
 echo "wandb_project_name: $tracker_project_name"
+echo "exp_names: $exp_names"
 IMG_PATH="data/test/PG-eval-data/MJHQ-30K/meta_data.json"
 TXT_PATH="data/test/PG-eval-data/MJHQ-30K/meta_data.json"
 
@@ -69,7 +70,8 @@ if [ "$clip_score" = true ]; then
     cmd="${cmd//\{exp_name\}/$exp_names}"
     cmd="${cmd//\{job_name\}/$job_name}"
     cmd="${cmd//\{gpu_id\}/0}"
-    eval CUDA_VISIBLE_DEVICES=0 $cmd
+    # eval CUDA_VISIBLE_DEVICES=0 $cmd
+    eval $cmd
   else
 
     if [ ! -f "$exp_names" ]; then
@@ -78,7 +80,7 @@ if [ "$clip_score" = true ]; then
     fi
 
     gpu_id=0
-    max_parallel_jobs=8
+    max_parallel_jobs=1
     job_count=0
     echo "" >> "$exp_names"   # add a new line to the file avoid skipping last line dir
 
@@ -90,7 +92,8 @@ if [ "$clip_score" = true ]; then
         cmd="${cmd//\{job_name\}/$job_name}"
         cmd="${cmd//\{gpu_id\}/$gpu_id}"
         echo "Running on GPU $gpu_id: $cmd"
-        eval CUDA_VISIBLE_DEVICES=$gpu_id $cmd &
+        # eval CUDA_VISIBLE_DEVICES=$gpu_id $cmd &
+        eval $cmd &
 
         gpu_id=$(( (gpu_id + 1) % 8 ))
         job_count=$((job_count + 1))
